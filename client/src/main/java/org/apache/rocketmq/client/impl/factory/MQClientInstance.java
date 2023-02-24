@@ -925,7 +925,12 @@ public class MQClientInstance {
         }
     }
 
+    /**
+     * MQClientInstance的方法
+     * 立即重平衡
+     */
     public void rebalanceImmediately() {
+        //唤醒重平衡服务，立即重平衡
         this.rebalanceService.wakeup();
     }
 

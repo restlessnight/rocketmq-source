@@ -68,6 +68,11 @@ public class ClientHousekeepingService implements ChannelEventListener {
         this.brokerController.getBrokerStatsManager().incChannelConnectNum();
     }
 
+    /**
+     * 连接断开事件CLOSE Broker同样会发送重平衡请求给消费者组下面的所有消费者
+     * @param remoteAddr
+     * @param channel
+     */
     @Override
     public void onChannelClose(String remoteAddr, Channel channel) {
         this.brokerController.getProducerManager().doChannelCloseEvent(remoteAddr, channel);
@@ -76,6 +81,11 @@ public class ClientHousekeepingService implements ChannelEventListener {
         this.brokerController.getBrokerStatsManager().incChannelCloseNum();
     }
 
+    /**
+     * 连接异常事件EXCEPTION Broker同样会发送重平衡请求给消费者组下面的所有消费者
+     * @param remoteAddr
+     * @param channel
+     */
     @Override
     public void onChannelException(String remoteAddr, Channel channel) {
         this.brokerController.getProducerManager().doChannelCloseEvent(remoteAddr, channel);
@@ -84,6 +94,11 @@ public class ClientHousekeepingService implements ChannelEventListener {
         this.brokerController.getBrokerStatsManager().incChannelExceptionNum();
     }
 
+    /**
+     * 或者连接闲置事件IDLE Broker同样会发送重平衡请求给消费者组下面的所有消费者
+     * @param remoteAddr
+     * @param channel
+     */
     @Override
     public void onChannelIdle(String remoteAddr, Channel channel) {
         this.brokerController.getProducerManager().doChannelCloseEvent(remoteAddr, channel);

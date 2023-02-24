@@ -26,11 +26,11 @@
     <appender name="DefaultAppender" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <append>true</append>
         <File>
-            ${rocketmq.log.root:-${user.home}${file.separator}logs${file.separator}rocketmqlogs}${file.separator}rocketmq_client.log
+            ${rocketmq.log.root:-${ROCKETMQ_HOME}${file.separator}logs${file.separator}rocketmqlogs}${file.separator}rocketmq_client.log
         </File>
         <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
             <FileNamePattern>
-                ${rocketmq.log.root:-${user.home}${file.separator}logs${file.separator}rocketmqlogs}${file.separator}other_days${file.separator}rocketmq_client-%i.log.gz
+                ${rocketmq.log.root:-${ROCKETMQ_HOME}${file.separator}logs${file.separator}rocketmqlogs}${file.separator}other_days${file.separator}rocketmq_client-%i.log.gz
             </FileNamePattern>
             <minIndex>1</minIndex>
             <maxIndex>${rocketmq.log.file.maxIndex:-10}</maxIndex>

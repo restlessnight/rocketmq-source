@@ -65,6 +65,12 @@ public class ClientRemotingProcessor implements NettyRequestProcessor {
         this.mqClientFactory = mqClientFactory;
     }
 
+    /**
+     * ClientRemotingProcessor的方法
+     * 来自broker的请求在客户端是通过ClientRemotingProcessor#processRequest处理的。
+     * NOTIFY_CONSUMER_IDS_CHANGED请求通过客户端的ClientRemotingProcessor#notifyConsumerIdsChanged方法处理。
+     * 处理来自远程服务端的请求
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
@@ -72,6 +78,8 @@ public class ClientRemotingProcessor implements NettyRequestProcessor {
             case RequestCode.CHECK_TRANSACTION_STATE:
                 return this.checkTransactionState(ctx, request);
             case RequestCode.NOTIFY_CONSUMER_IDS_CHANGED:
+                //处理NOTIFY_CONSUMER_IDS_CHANGED请求
+                //客户端接口到broker的重平衡请求之后，调用该方法才理。逻辑很简单，内部仅仅是调用我们之前讲的rebalanceImmediately 方法唤醒负载均衡服务rebalanceService，进行重平衡。
                 return this.notifyConsumerIdsChanged(ctx, request);
             case RequestCode.RESET_CONSUMER_CLIENT_OFFSET:
                 return this.resetOffset(ctx, request);
@@ -131,14 +139,25 @@ public class ClientRemotingProcessor implements NettyRequestProcessor {
         return null;
     }
 
+    /**
+     * 客户端接口到broker的重平衡请求之后，调用该方法才理。逻辑很简单，
+     * 内部仅仅是调用我们之前讲的rebalanceImmediately
+     * 方法唤醒负载均衡服务rebalanceService，进行重平衡。
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand notifyConsumerIdsChanged(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         try {
+            //解析请求头
             final NotifyConsumerIdsChangedRequestHeader requestHeader =
                 (NotifyConsumerIdsChangedRequestHeader) request.decodeCommandCustomHeader(NotifyConsumerIdsChangedRequestHeader.class);
             logger.info("receive broker's notification[{}], the consumer group: {} changed, rebalance immediately",
                 RemotingHelper.parseChannelRemoteAddr(ctx.channel()),
                 requestHeader.getConsumerGroup());
+            //熟悉的方法，立即进行重平衡
             this.mqClientFactory.rebalanceImmediately();
         } catch (Exception e) {
             logger.error("notifyConsumerIdsChanged exception", UtilAll.exceptionSimpleDesc(e));

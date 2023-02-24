@@ -58,20 +58,38 @@ public class DefaultConsumerIdsChangeListener implements ConsumerIdsChangeListen
         }, 30, 15, TimeUnit.SECONDS);
     }
 
+    /**
+     * DefaultConsumerIdsChangeListener的方法
+     *
+     * 处理监听到的事件
+     *
+     * 该方法通知监听器处理对应的事件，需要进行通知的事件为ConsumerGroupEvent.CHANGE。
+     * 可以看到该方法中对于ConsumerGroupEvent.CHANGE事件的处理为：如果允许通知，则遍历该ConsumerGroup的连接集合，
+     * 然后对每个连接调用notifyConsumerIdsChanged方法通知对应的客户端消费者执行负载均衡。
+     *
+     * @param event 事件
+     * @param group 消费者组
+     * @param args 参数
+     */
     @Override
     public void handle(ConsumerGroupEvent event, String group, Object... args) {
         if (event == null) {
             return;
         }
         switch (event) {
+            //改变事件，需要通知该消费者组的每一个消费者
             case CHANGE:
                 if (args == null || args.length < 1) {
                     return;
                 }
+                //获取参数
                 List<Channel> channels = (List<Channel>) args[0];
+                //如果允许通知
                 if (channels != null && brokerController.getBrokerConfig().isNotifyConsumerIdsChangedEnable()) {
                     if (this.brokerController.getBrokerConfig().isRealTimeNotifyConsumerChange()) {
+                        //遍历连接集合
                         for (Channel chl : channels) {
+                            //通知该消费者客户端执行负载均衡 Broker2Client#notifyConsumerIdsChanged
                             this.brokerController.getBroker2Client().notifyConsumerIdsChanged(chl, group);
                         }
                     } else {

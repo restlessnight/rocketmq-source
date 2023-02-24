@@ -165,6 +165,20 @@ public class ConsumerManager {
         consumerGroupInfo.getSubscriptionTable().put(topic, subscriptionData);
     }
 
+    /**
+     * ConsumerManager的方法
+     * 注册consumer，返回consumer信息是否已发生改变
+     * 如果发生了改变，Broker会发送NOTIFY_CONSUMER_IDS_CHANGED请求给同组的所有consumer客户端，要求进行重平衡操作
+     *
+     * @param group                            消费者组
+     * @param clientChannelInfo                客户端连接信息
+     * @param consumeType                      消费类型，PULL or PUSH
+     * @param messageModel                     消息模式，集群 or 广播
+     * @param consumeFromWhere                 启动消费位置
+     * @param subList                          订阅信息数据
+     * @param isNotifyConsumerIdsChangedEnable 一个consumer改变时是否通知该consumergroup中的所有consumer进行重平衡
+     * @return 是否重平衡
+     */
     public boolean registerConsumer(final String group, final ClientChannelInfo clientChannelInfo,
         ConsumeType consumeType, MessageModel messageModel, ConsumeFromWhere consumeFromWhere,
         final Set<SubscriptionData> subList, boolean isNotifyConsumerIdsChangedEnable) {
@@ -176,7 +190,9 @@ public class ConsumerManager {
         ConsumeType consumeType, MessageModel messageModel, ConsumeFromWhere consumeFromWhere,
         final Set<SubscriptionData> subList, boolean isNotifyConsumerIdsChangedEnable, boolean updateSubscription) {
         long start = System.currentTimeMillis();
+        //获取当前group对应的ConsumerGroupInfo
         ConsumerGroupInfo consumerGroupInfo = this.consumerTable.get(group);
+        //如果为null，那么新建一个ConsumerGroupInfo并存入consumerTable
         if (null == consumerGroupInfo) {
             callConsumerIdsChangeListener(ConsumerGroupEvent.CLIENT_REGISTER, group, clientChannelInfo,
                 subList.stream().map(SubscriptionData::getTopic).collect(Collectors.toSet()));
@@ -184,24 +200,32 @@ public class ConsumerManager {
             ConsumerGroupInfo prev = this.consumerTable.putIfAbsent(group, tmp);
             consumerGroupInfo = prev != null ? prev : tmp;
         }
-
+        /*
+         * 1 更新连接
+         */
         boolean r1 =
             consumerGroupInfo.updateChannel(clientChannelInfo, consumeType, messageModel,
                 consumeFromWhere);
+        /*
+         * 2 更新订阅信息
+         */
         boolean r2 = false;
         if (updateSubscription) {
             r2 = consumerGroupInfo.updateSubscription(subList);
         }
-
+        /*
+         * 3 如果连接或者订阅信息有更新，并且允许通知，那么通知该consumergroup中的所有consumer进行重平衡
+         */
         if (r1 || r2) {
             if (isNotifyConsumerIdsChangedEnable) {
+                //CHANGE事件
                 callConsumerIdsChangeListener(ConsumerGroupEvent.CHANGE, group, consumerGroupInfo.getAllChannel());
             }
         }
         if (null != this.brokerStatsManager) {
             this.brokerStatsManager.incConsumerRegisterTime((int) (System.currentTimeMillis() - start));
         }
-
+        //注册订阅信息到ConsumerFilterManager
         callConsumerIdsChangeListener(ConsumerGroupEvent.REGISTER, group, subList, clientChannelInfo);
 
         return r1 || r2;

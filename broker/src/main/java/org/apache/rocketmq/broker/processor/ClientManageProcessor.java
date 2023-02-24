@@ -55,7 +55,9 @@ public class ClientManageProcessor implements NettyRequestProcessor {
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
         switch (request.getCode()) {
+            //客户端心跳请求
             case RequestCode.HEART_BEAT:
+                //客户端心跳请求
                 return this.heartBeat(ctx, request);
             case RequestCode.UNREGISTER_CLIENT:
                 return this.unregisterClient(ctx, request);
@@ -67,21 +69,36 @@ public class ClientManageProcessor implements NettyRequestProcessor {
         return null;
     }
 
+
     @Override
     public boolean rejectRequest() {
         return false;
     }
 
+    /**
+     * 该方法用于Broker处理来自客户端（包括consumer和producer）的心跳请求。
+     *
+     * 主要流程就是：
+     * 1. 解码消息中的信息成为HeartbeatData对象，该对象的结构我们在在Producer启动的部分就讲过了。
+     * 2. 循环遍历处理consumerDataSet集合，对ConsumerData信息进行注册或者更改，如果consumer信息发生了改变，
+     *    Broker会发送NOTIFY_CONSUMER_IDS_CHANGED请求给同组的所有consumer客户端，要求进行重平衡操作。
+     * 3. 循环遍历处理consumerDataSet集合，对 ProducerData信息进行注册或者更改。
+     * @return RemotingCommand
+     */
     public RemotingCommand heartBeat(ChannelHandlerContext ctx, RemotingCommand request) {
+        //构建响应命令对象
         RemotingCommand response = RemotingCommand.createResponseCommand(null);
         HeartbeatData heartbeatData = HeartbeatData.decode(request.getBody(), HeartbeatData.class);
+        //构建客户端连接信息对象
         ClientChannelInfo clientChannelInfo = new ClientChannelInfo(
             ctx.channel(),
             heartbeatData.getClientID(),
             request.getLanguage(),
             request.getVersion()
         );
-
+        /*
+         * 1 循环遍历处理consumerDataSet，即处理consumer的心跳信息
+         */
         for (ConsumerData consumerData : heartbeatData.getConsumerDataSet()) {
             //Reject the PullConsumer
             if (brokerController.getBrokerConfig().isRejectPullConsumerEnable()) {
@@ -99,16 +116,20 @@ public class ClientManageProcessor implements NettyRequestProcessor {
                 }
             }
 
+            //查找broker缓存的当前消费者组的订阅组配置
             SubscriptionGroupConfig subscriptionGroupConfig =
                 this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(
                     consumerData.getGroupName());
             boolean isNotifyConsumerIdsChangedEnable = true;
+            //如果已存在订阅组
             if (null != subscriptionGroupConfig) {
+                //当consumer发生改变的时候是否支持通知同组的所有consumer，默认true，即支持
                 isNotifyConsumerIdsChangedEnable = subscriptionGroupConfig.isNotifyConsumerIdsChangedEnable();
                 int topicSysFlag = 0;
                 if (consumerData.isUnitMode()) {
                     topicSysFlag = TopicSysFlag.buildSysFlag(false, true);
                 }
+                //尝试创建重试topic
                 String newTopic = MixAll.getRetryTopic(consumerData.getGroupName());
                 this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(
                     newTopic,
@@ -116,6 +137,10 @@ public class ClientManageProcessor implements NettyRequestProcessor {
                     PermName.PERM_WRITE | PermName.PERM_READ, hasOrderTopicSub, topicSysFlag);
             }
 
+            /*
+             * 注册consumer，返回consumer信息是否已发生改变
+             * 如果发生了改变，Broker会发送NOTIFY_CONSUMER_IDS_CHANGED请求给同组的所有consumer客户端，要求进行重平衡操作
+             */
             boolean changed = this.brokerController.getConsumerManager().registerConsumer(
                 consumerData.getGroupName(),
                 clientChannelInfo,
@@ -127,16 +152,23 @@ public class ClientManageProcessor implements NettyRequestProcessor {
             );
 
             if (changed) {
+                //如果consumer信息发生了改变，打印日志
                 LOGGER.info(
                     "ClientManageProcessor: registerConsumer info changed, SDK address={}, consumerData={}",
                     RemotingHelper.parseChannelRemoteAddr(ctx.channel()), consumerData.toString());
             }
         }
-
+        /*
+         * 2 循环遍历处理producerDataSet，即处理producer的心跳信息
+         */
         for (ProducerData data : heartbeatData.getProducerDataSet()) {
+            /*
+             * 注册producer
+             */
             this.brokerController.getProducerManager().registerProducer(data.getGroupName(),
                 clientChannelInfo);
         }
+        //返回响应
         response.setCode(ResponseCode.SUCCESS);
         response.setRemark(null);
         return response;

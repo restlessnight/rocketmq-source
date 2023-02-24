@@ -57,7 +57,13 @@ public class NamesrvStartup {
 
     public static NamesrvController main0(String[] args) {
         try {
+            /*
+             * 1.方法主要是解析命令行，加载NameServer配置和NettyServer各种配置
+             */
             parseCommandlineAndConfigFile(args);
+            /*
+             * 2.创建并且初始化一个NamesrvController实例
+             */
             NamesrvController controller = createAndStartNamesrvController();
             return controller;
         } catch (Throwable e) {
@@ -81,22 +87,31 @@ public class NamesrvStartup {
     }
 
     public static void parseCommandlineAndConfigFile(String[] args) throws Exception {
+        //设置RocketMQ的版本信息，属性名为rocketmq.remoting.version
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
-
+        //PackageConflictDetect.detectFastjson();
+        /*jar包启动时，构建命令行操作的指令，使用main方法启动可以忽略*/
         Options options = ServerUtil.buildCommandlineOptions(new Options());
+        //mqnamesrv命令文件
         CommandLine commandLine = ServerUtil.parseCmdLine("mqnamesrv", args, buildCommandlineOptions(options), new DefaultParser());
         if (null == commandLine) {
             System.exit(-1);
             return;
         }
 
+        //创建NameServer的配置类，包含NameServer的配置，比如ROCKETMQ_HOME
         namesrvConfig = new NamesrvConfig();
+        //和NettyServer的配置类
         nettyServerConfig = new NettyServerConfig();
+        //netty服务的监听端口设置为9876
         nettyClientConfig = new NettyClientConfig();
         nettyServerConfig.setListenPort(9876);
+        //判断命令行中是否包含字符'c'，即是否包含通过命令行指定配置文件的命令
+        //例如，启动Broker的时候添加的 -c E:\study\rocketmq\rocketmq-home\conf\broker.conf命令
         if (commandLine.hasOption('c')) {
             String file = commandLine.getOptionValue('c');
             if (file != null) {
+                /*解析配置文件并且存入NamesrvConfig和NettyServerConfig中，没有的话就不用管*/
                 InputStream in = new BufferedInputStream(Files.newInputStream(Paths.get(file)));
                 properties = new Properties();
                 properties.load(in);
@@ -113,8 +128,9 @@ public class NamesrvStartup {
                 in.close();
             }
         }
-
+        //把命令行的配置解析到namesrvConfig
         MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), namesrvConfig);
+        /*判断命令行中是否包含字符'p'，如果存在则打印配置信息并结束jvm运行，没有的话就不用管*/
         if (commandLine.hasOption('p')) {
             MixAll.printObjectProperties(logConsole, namesrvConfig);
             MixAll.printObjectProperties(logConsole, nettyServerConfig);
@@ -124,11 +140,12 @@ public class NamesrvStartup {
             }
             System.exit(0);
         }
-
+        //如果不存在ROCKETMQ_HOME的配置，那么打印异常并退出程序，这就是最开始启动NameServer是抛出异常的位置
         if (null == namesrvConfig.getRocketmqHome()) {
             System.out.printf("Please set the %s variable in your environment to match the location of the RocketMQ installation%n", MixAll.ROCKETMQ_HOME_ENV);
             System.exit(-2);
         }
+        //打印nameServer 服务器配置类和 netty 服务器配置类的配置信息
         MixAll.printObjectProperties(log, namesrvConfig);
         MixAll.printObjectProperties(log, nettyServerConfig);
 

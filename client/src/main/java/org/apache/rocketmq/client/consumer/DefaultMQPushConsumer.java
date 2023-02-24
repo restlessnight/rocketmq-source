@@ -353,12 +353,24 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      * @param consumerGroup Consume queue.
      * @param rpcHook RPC hook to execute before each remoting command.
      * @param allocateMessageQueueStrategy Message queue allocating algorithm.
+     *
+     * 创建DefaultMQPushConsumer实例
+     * 这个构造器是指定了命名空间、生产者组、RPC钩子和消费者之间消息分配的策略算法的构造器，
+     * 其内部创建了一个DefaultMQPushConsumerImpl实例，DefaultMQPushConsumer可以看作是DefaultMQPushConsumerImpl的包装类，
+     * 开放给开发人员使用，DefaultMQPushConsumer中的几乎所有的方法内部都是由DefaultMQPushConsumerImpl实现的。
+     * 这是门面模式（外观模式）设计模式。
+     *
+     * @param namespace                    namespace地址
+     * @param consumerGroup                消费者组
+     * @param rpcHook                      在每个远程处理命令之前执行的RPC钩子
+     * @param allocateMessageQueueStrategy 消费者之间消息分配的策略算法
      */
     public DefaultMQPushConsumer(final String namespace, final String consumerGroup, RPCHook rpcHook,
         AllocateMessageQueueStrategy allocateMessageQueueStrategy) {
         this.consumerGroup = consumerGroup;
         this.namespace = namespace;
         this.allocateMessageQueueStrategy = allocateMessageQueueStrategy;
+        //创建DefaultMQPushConsumerImpl实例
         defaultMQPushConsumerImpl = new DefaultMQPushConsumerImpl(this, rpcHook);
     }
 
@@ -730,11 +742,17 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      * This method gets internal infrastructure readily to serve. Instances must call this method after configuration.
      *
      * @throws MQClientException if there is any client error.
+     *
+     * DefaultMQPushConsumer的方法
+     * 启动消费者
      */
     @Override
     public void start() throws MQClientException {
+        //根据namespace和consumerGroup设置消费者组
         setConsumerGroup(NamespaceUtil.wrapNamespace(this.getNamespace(), this.consumerGroup));
+        //默认消费者实现启动
         this.defaultMQPushConsumerImpl.start();
+        //消息轨迹跟踪服务，默认null
         if (null != traceDispatcher) {
             try {
                 traceDispatcher.start(this.getNamesrvAddr(), this.getAccessChannel());
@@ -791,9 +809,18 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      * @param subExpression subscription expression.it only support or operation such as "tag1 || tag2 || tag3" <br>
      * if null or * expression,meaning subscribe all
      * @throws MQClientException if there is any client error.
+     *
+     * DefaultMQPushConsumer的方法
+     * <p>
+     * 订阅topic，支持消息过滤表达式
+     *
+     * @param topic         订阅的topic
+     * @param subExpression 订阅表达式。它仅支持或操作，如“tag1||tag2||tag3”，如果为 null 或 *，则表示订阅全部
+     *
      */
     @Override
     public void subscribe(String topic, String subExpression) throws MQClientException {
+        //调用defaultMQPushConsumerImpl的subscribe方法
         this.defaultMQPushConsumerImpl.subscribe(withNamespace(topic), subExpression);
     }
 

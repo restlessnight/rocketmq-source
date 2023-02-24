@@ -80,6 +80,17 @@ public class Broker2Client {
         return this.brokerController.getRemotingServer().invokeSync(channel, request, 10000);
     }
 
+    /**
+     * Broker2Client的方法
+     *
+     * 通知消费者变更
+     *
+     * 该方法由broker向客户端发送一个单向请求，Code为NOTIFY_CONSUMER_IDS_CHANGED，
+     * 这就是Broker通知客户端的重平衡请求，当客户端收到该请求之后，将会进行重平衡操作。
+     *
+     * @param channel       连接
+     * @param consumerGroup 消费者组
+     */
     public void notifyConsumerIdsChanged(
         final Channel channel,
         final String consumerGroup) {
@@ -88,12 +99,16 @@ public class Broker2Client {
             return;
         }
 
+        //构建请求头
         NotifyConsumerIdsChangedRequestHeader requestHeader = new NotifyConsumerIdsChangedRequestHeader();
         requestHeader.setConsumerGroup(consumerGroup);
+        //构建远程命令对象，请求code为NOTIFY_CONSUMER_IDS_CHANGED
         RemotingCommand request =
             RemotingCommand.createRequestCommand(RequestCode.NOTIFY_CONSUMER_IDS_CHANGED, requestHeader);
 
         try {
+            //发送单向请求，无需等待客户端回应
+            //broker的请求在客户端是通过ClientRemotingProcessor#processRequest处理的
             this.brokerController.getRemotingServer().invokeOneway(channel, request, 10);
         } catch (Exception e) {
             log.error("notifyConsumerIdsChanged exception. group={}, error={}", consumerGroup, e.toString());
