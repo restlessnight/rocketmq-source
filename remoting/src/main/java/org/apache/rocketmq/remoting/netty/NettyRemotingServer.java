@@ -355,14 +355,25 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         }
     }
 
+    /**
+     * NettyRemotingServer的方法，注册netty请求处理器
+     * remotingServer#registerProcessor方法的源码也比较简单。该方法将处理器和对应的线程池绑定为一个Pair对象，
+     * 并且将这个pair对象放入processorTable中，其值就是pair对象，key就是对应的请求编码RequestCode
+     * @param requestCode 请求编码
+     * @param processor 请求处理器
+     * @param executor 请求执行器
+     */
     @Override
     public void registerProcessor(int requestCode, NettyRequestProcessor processor, ExecutorService executor) {
         ExecutorService executorThis = executor;
         if (null == executor) {
+            //默认执行器是publicExecutor，线程数默认4个线程，线程名以NettyServerPublicExecutor_为前缀。
             executorThis = this.publicExecutor;
         }
-
+        //构建Pair对象
         Pair<NettyRequestProcessor, ExecutorService> pair = new Pair<>(processor, executorThis);
+        //存入nettyRemotingServer的processorTable属性中
+        //这个容器包含每个请求代码（aka）的所有处理器。对于每个传入的请求，我们可以在这个映射中查找响应的处理器来处理请求。
         this.processorTable.put(requestCode, pair);
     }
 
