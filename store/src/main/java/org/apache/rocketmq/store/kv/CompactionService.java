@@ -107,8 +107,15 @@ public class CompactionService extends ServiceThread {
         }
     }
 
+    /**
+     * 方法负责加载压缩服务的状态。lastExitOK 是一个布尔值参数，表示上一次退出时是否正常。
+     * 加载压缩服务的逻辑可能包括从存储中加载压缩相关的配置和状态信息，以便恢复到上一次退出时的状态。
+     * @param exitOK
+     * @return
+     */
     public boolean load(boolean exitOK) {
         try {
+            //todo 具体逻辑分析
             compactionStore.load(exitOK);
             return true;
         } catch (Exception e) {

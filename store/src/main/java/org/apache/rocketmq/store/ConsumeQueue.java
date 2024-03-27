@@ -40,6 +40,23 @@ import org.apache.rocketmq.store.queue.FileQueueLifeCycle;
 import org.apache.rocketmq.store.queue.QueueOffsetAssigner;
 import org.apache.rocketmq.store.queue.ReferredIterator;
 
+/**
+ * 官方描述如下：消息消费队列（可以理解为Topic中的队列），引入的目的主要是提高消息消费的性能，由于RocketMQ是基于主题topic的订阅模式，消息消费是针对主题进行的，
+ * 如果要遍历commitlog文件中根据topic检索消息是非常低效的。
+ *
+ * Consumer即可根据ConsumeQueue来查找待消费的消息。其中，ConsumeQueue（逻辑消费队列）作为消费消息的索引，保存了指定Topic下的队列消息在CommitLog中的起始物理偏移量offset，
+ * 消息大小size和消息Tag的HashCode值，以及ConsumeOffset（每个消费者组的消费位置）。
+ *
+ * consumequeue文件可以看成是基于topic的commitlog索引文件，故consumequeue文件夹的组织方式如下：topic/queue/file三层组织结构，
+ * 具体存储路径为：$HOME/store/consumequeue/{topic}/{queueId}/{fileName}。
+ *
+ * 同样consumequeue文件中的条目采取定长设计，每个条目共20字节，分别为8字节的commitlog物理偏移量、4字节的消息长度、8字节tag hashcode，单个文件由30W个条目组成，
+ * 可以像数组一样随机访问每一个条目，每个ConsumeQueue文件大小约5.72M。
+ *
+ * ConsumeQueue名字长度为20位，左边补零，剩余为起始偏移量；比如00000000000000000000代表第一个文件，起始偏移量为0，文件大小为600w，
+ * 当第一个文件满之后创建的第二个文件的名字为00000000000006000000，起始偏移量为6000000，以此类推，消息存储的时候会顺序写入文件，当文件写满了，写入下一个文件。
+ *
+ */
 public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
@@ -96,59 +113,85 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
         }
     }
 
+    /**
+     * ConsumeQueue对象建立之后，会对自己管理的队列id目录下面的ConsumeQueue文件进行加载。内部就是调用mappedFileQueue的load方法，
+     * 该方法我们前面讲过了，会对每个ConsumeQueue文件床创建一个MappedFile对象并且进行内存映射mmap操作
+     * @return
+     */
     @Override
     public boolean load() {
+        //调用mappedFileQueue的load方法，会对每个ConsumeQueue文件床创建一个MappedFile对象并且进行内存映射mmap操作。
         boolean result = this.mappedFileQueue.load();
         log.info("load consume queue " + this.topic + "-" + this.queueId + " " + (result ? "OK" : "Failed"));
         if (isExtReadEnable()) {
+            //扩展加载，扩展消费队列用于存储不重要的东西，如消息存储时间、过滤位图等。
             result &= this.consumeQueueExt.load();
         }
         return result;
     }
 
+    /**
+     * recover恢复ConsumeQueue 到内存
+     */
     @Override
     public void recover() {
+        //获取所有的ConsumeQueue文件映射的mappedFiles集合
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
         if (!mappedFiles.isEmpty()) {
-
+            //从倒数第三个文件开始恢复
             int index = mappedFiles.size() - 3;
+            //不足3个文件，则直接从第一个文件开始恢复。
             if (index < 0) {
                 index = 0;
             }
-
+            //consumequeue映射文件的文件大小
             int mappedFileSizeLogics = this.mappedFileSize;
+            //获取文件对应的映射对象
             MappedFile mappedFile = mappedFiles.get(index);
+            //文件映射对应的DirectByteBuffer
             ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();
+            //获取文件映射的初始物理偏移量，其实和文件名相同
             long processOffset = mappedFile.getFileFromOffset();
+            //consumequeue映射文件的有效offset
             long mappedFileOffset = 0;
             long maxExtAddr = 1;
             while (true) {
+                //校验每一个索引条目的有效性，CQ_STORE_UNIT_SIZE是每个条目的大小，默认20
                 for (int i = 0; i < mappedFileSizeLogics; i += CQ_STORE_UNIT_SIZE) {
+                    //获取该条目对应的消息在commitlog文件中的物理偏移量
                     long offset = byteBuffer.getLong();
+                    //获取该条目对应的消息在commitlog文件中的总长度
                     int size = byteBuffer.getInt();
+                    //获取该条目对应的消息的tag哈希值
                     long tagsCode = byteBuffer.getLong();
-
+                    //如果offset和size都大于0则表示当前条目有效
                     if (offset >= 0 && size > 0) {
+                        //更新当前ConsumeQueue文件中的有效数据偏移量
                         mappedFileOffset = i + CQ_STORE_UNIT_SIZE;
+                        //更新当前queueId目录下的所有ConsumeQueue文件中的最大有效物理偏移量
                         this.maxPhysicOffset = offset + size;
                         if (isExtAddr(tagsCode)) {
                             maxExtAddr = tagsCode;
                         }
                     } else {
+                        //否则，表示当前条目无效了，后续的条目不会遍历
                         log.info("recover current consume queue file over,  " + mappedFile.getFileName() + " "
                             + offset + " " + size + " " + tagsCode);
                         break;
                     }
                 }
-
+                //如果当前ConsumeQueue文件中的有效数据偏移量和文件大小一样，则表示该ConsumeQueue文件的所有条目都是有效的
                 if (mappedFileOffset == mappedFileSizeLogics) {
+                    //校验下一个文件
                     index++;
+                    //遍历到了最后一个文件，则结束遍历
                     if (index >= mappedFiles.size()) {
 
                         log.info("recover last consume queue file over, last mapped file "
                             + mappedFile.getFileName());
                         break;
                     } else {
+                        //获取下一个文件的数据
                         mappedFile = mappedFiles.get(index);
                         byteBuffer = mappedFile.sliceByteBuffer();
                         processOffset = mappedFile.getFileFromOffset();
@@ -156,20 +199,28 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
                         log.info("recover next consume queue file, " + mappedFile.getFileName());
                     }
                 } else {
+                    //如果不相等，则表示当前ConsumeQueue有部分无效数据，恢复结束
                     log.info("recover current consume queue over " + mappedFile.getFileName() + " "
                         + (processOffset + mappedFileOffset));
                     break;
                 }
             }
-
+            //该文件映射的已恢复的物理偏移量
             processOffset += mappedFileOffset;
+            //设置当前queueId下面的所有的ConsumeQueue文件的最新数据
+            //设置刷盘最新位置，提交的最新位置
             this.mappedFileQueue.setFlushedWhere(processOffset);
             this.mappedFileQueue.setCommittedWhere(processOffset);
+
+            //删除文件最大有效数据偏移量processOffset之后的所有数据
             this.mappedFileQueue.truncateDirtyFiles(processOffset);
 
+            //检查是否启用了扩展读功能
             if (isExtReadEnable()) {
+                //调用消费队列的扩展文件（consumeQueueExt）的恢复方法。这个方法可能用于从存储介质中读取并恢复扩展文件的状态信息，以便恢复上次的工作状态
                 this.consumeQueueExt.recover();
                 log.info("Truncate consume queue extend file by max {}", maxExtAddr);
+                // 调用消费队列的扩展文件的截断方法，根据最大地址（maxExtAddr）截断扩展文件。这个操作可能会截断扩展文件中多余的部分，以减少文件大小或者清理无效数据。
                 this.consumeQueueExt.truncateByMaxAddress(maxExtAddr);
             }
         }

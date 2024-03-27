@@ -109,6 +109,7 @@ public class BatchConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCy
 
     @Override
     public boolean load() {
+        //调用mappedFileQueue的load方法，会对每个ConsumeQueue文件床创建一个MappedFile对象并且进行内存映射mmap操作。
         boolean result = this.mappedFileQueue.load();
         log.info("Load batch consume queue {}-{} {} {}", topic, queueId, result ? "OK" : "Failed", mappedFileQueue.getMappedFiles().size());
         return result;

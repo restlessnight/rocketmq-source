@@ -117,7 +117,17 @@ public class DefaultMappedFile extends AbstractMappedFile {
     public DefaultMappedFile() {
     }
 
+    /**
+     * 在物理上，commotlog目录下面是一个个的commitlog文件，但是在Java中进行了三层映射，CommitLog-MappedFileQueue-MappedFile。CommitLog中包含MappedFileQueue，
+     * 以及commitlog相关的其他服务，例如刷盘服务；MappedFileQueue中包含MappedFile集合，以及单个commotlog文件大小等属性，
+     * 而MappedFile才是真正的一个commotlog文件在Java中的映射，包含文件名、大小、mmap对象mappedByteBuffer等属性。
+     * 实际上MappedFileQueue和MappedFile都是通用类，commitlog、comsumequeue、indexfile文件都会使用到。
+     * @param fileName
+     * @param fileSize
+     * @throws IOException
+     */
     public DefaultMappedFile(final String fileName, final int fileSize) throws IOException {
+        //调用init初始化
         init(fileName, fileSize);
     }
 
@@ -142,18 +152,38 @@ public class DefaultMappedFile extends AbstractMappedFile {
         this.transientStorePool = transientStorePool;
     }
 
+    /**
+     * init初始化
+     * @param fileName
+     * @param fileSize
+     * @throws IOException
+     */
     private void init(final String fileName, final int fileSize) throws IOException {
+        //文件名。长度为20位，左边补零，剩余为起始偏移量，比如00000000000000000000代表了第一个文件，起始偏移量为0
         this.fileName = fileName;
+        //文件大小。默认1G=1073741824
         this.fileSize = fileSize;
+        //构建file对象
         this.file = new File(fileName);
+        //构建文件起始索引，就是取自文件名
         this.fileFromOffset = Long.parseLong(this.file.getName());
         boolean ok = false;
-
+        //确保文件目录存在
         UtilAll.ensureDirOK(this.file.getParent());
 
         try {
+            /*
+            * 对当前commitlog文件构建文件通道fileChannel
+            * RandomAccessFile mode
+            * "r"：只读模式。如果指定的文件不存在，则会抛出 FileNotFoundException。
+            * "rw"：读写模式。如果指定的文件不存在，则会创建新文件；如果存在，则会截断现有文件。
+            * "rws"：读写模式，但是对文件内容的修改会立即写入底层存储设备。同时，文件的元数据（例如文件的最后修改时间）也会被立即写入底层存储设备。
+            * "rwd"：读写模式，类似于 "rws"，但只有对文件内容的修改会立即写入底层存储设备，文件的元数据则在需要时才会被写入底层存储设备。
+            */
             this.fileChannel = new RandomAccessFile(this.file, "rw").getChannel();
+            //把commitlog文件完全的映射到虚拟内存，也就是内存映射，即mmap，提升读写性能
             this.mappedByteBuffer = this.fileChannel.map(MapMode.READ_WRITE, 0, fileSize);
+            //记录数据
             TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(fileSize);
             TOTAL_MAPPED_FILES.incrementAndGet();
             ok = true;
@@ -164,6 +194,9 @@ public class DefaultMappedFile extends AbstractMappedFile {
             log.error("Failed to map file " + this.fileName, e);
             throw e;
         } finally {
+            //释放fileChannel，注意释放fileChannel不会对之前的mappedByteBuffer映射产生影响
+            //todo 注意释放fileChannel不会对之前的mappedByteBuffer映射产生影响 是否有问题？
+            //此处应该是没有映射成功的时候才释放fileChannel
             if (!ok && this.fileChannel != null) {
                 this.fileChannel.close();
             }

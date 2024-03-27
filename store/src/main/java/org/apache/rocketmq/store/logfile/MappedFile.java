@@ -32,6 +32,11 @@ import org.apache.rocketmq.store.SelectMappedBufferResult;
 import org.apache.rocketmq.store.TransientStorePool;
 import org.apache.rocketmq.store.config.FlushDiskType;
 
+/**
+ * MappedFile作为一个RocketMQ的物理文件在Java中的映射类。
+ * commitLog consumerQueue、indexFile3种文件磁盘的读写都是通过MappedFile操作的。
+ * 它的构造器中会对当前文件进行mmap内存映射操作
+ */
 public interface MappedFile {
     /**
      * Returns the file name of the {@code MappedFile}.

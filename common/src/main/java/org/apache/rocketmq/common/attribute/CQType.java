@@ -17,6 +17,11 @@
 
 package org.apache.rocketmq.common.attribute;
 
+/**
+ * 枚举类型 CQType，表示 Consume Queue（消费队列）的类型。
+ * SimpleCQ：表示简单的消费队列类型。在简单消费队列中，每个消息消费进度都被记录为一个单独的条目。
+ * BatchCQ：表示批量消费队列类型。在批量消费队列中，多个消息的消费进度可以被组合成一个批次，以减少存储开销并提高读写效率。
+ */
 public enum CQType {
     SimpleCQ,
     BatchCQ

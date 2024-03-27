@@ -79,6 +79,8 @@ public class ConsumeQueueStore {
     }
 
     private FileQueueLifeCycle getLifeCycle(String topic, int queueId) {
+        //此处为什么强转没有报错 new ConsumeQueue()
+        //方法中返回的是ConsumeQueue实例  ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle 所以不报错
         return (FileQueueLifeCycle) findOrCreateConsumeQueue(topic, queueId);
     }
 
@@ -106,39 +108,68 @@ public class ConsumeQueueStore {
         this.putMessagePositionInfoWrapper(cq, dispatchRequest);
     }
 
+    /**
+     * ConsumeQueue对象建立之后，会对自己管理的队列id目录下面的ConsumeQueue文件进行加载。
+     * 内部就是调用mappedFileQueue的load方法，
+     * 会对每个ConsumeQueue文件床创建一个MappedFile对象并且进行内存映射mmap操作。
+     * @param consumeQueue
+     * @return
+     */
     public boolean load(ConsumeQueueInterface consumeQueue) {
         FileQueueLifeCycle fileQueueLifeCycle = getLifeCycle(consumeQueue.getTopic(), consumeQueue.getQueueId());
         return fileQueueLifeCycle.load();
     }
 
+    /**
+     * 加载Consume Queue文件
+     * @return
+     */
     public boolean load() {
         boolean cqLoadResult = loadConsumeQueues(getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()), CQType.SimpleCQ);
         boolean bcqLoadResult = loadConsumeQueues(getStorePathBatchConsumeQueue(this.messageStoreConfig.getStorePathRootDir()), CQType.BatchCQ);
         return cqLoadResult && bcqLoadResult;
     }
 
+    /**
+     * 该方法用于加载消费队列文件，ConsumeQueue文件可以看作是CommitLog的索引文件，其存储了它所属Topic的消息在Commit Log中的偏移量。
+     * 消费者拉取消息的时候，可以从Consume Queue中快速的根据偏移量定位消息在Commit Log中的位置。
+     * 一个队列id目录对应着一个ConsumeQueue对象，其内部保存着一个mappedFileQueue对象，其表示当前队列id目录下面的ConsumeQueue文件集合，
+     * 同样一个ConsumeQueue文件被映射为一个MappedFile对象。
+     * 随后ConsumeQueue及其topic和queueId的对应关系被存入DefaultMessageStore的consumeQueueTable属性集合中。
+     * @param storePath
+     * @param cqType {@link CQType}
+     * @return
+     */
     private boolean loadConsumeQueues(String storePath, CQType cqType) {
+        //获取ConsumeQueue文件所在目录，目录路径为{storePathRootDir}/consumequeue
+        //${RocketMQ_Home}/store/consumequeue/${Topic}/${QueueId}/consumequeue
         File dirLogic = new File(storePath);
+        //获取目录下文件列表，实际上下面页是topic目录列表
         File[] fileTopicList = dirLogic.listFiles();
         if (fileTopicList != null) {
-
+            //遍历topic目录
             for (File fileTopic : fileTopicList) {
+                //获取topic名字
                 String topic = fileTopic.getName();
-
+                //获取topic目录下面的队列id目录
                 File[] fileQueueIdList = fileTopic.listFiles();
                 if (fileQueueIdList != null) {
                     for (File fileQueueId : fileQueueIdList) {
                         int queueId;
                         try {
+                            //获取队列id
                             queueId = Integer.parseInt(fileQueueId.getName());
                         } catch (NumberFormatException e) {
                             continue;
                         }
-
+                        //用于检查指定主题（topic）的消费队列（Consumer Queue）类型是否符合预期。该方法通常被用于在消息发送或消费时进行预检查，以确保消费队列类型的一致性
                         queueTypeShouldBe(topic, cqType);
-
+                        //创建ConsumeQueue对象，一个队列id目录对应着一个ConsumeQueue对象
+                        //其内部保存着
                         ConsumeQueueInterface logic = createConsumeQueueByType(cqType, topic, queueId, storePath);
+                        //将当然ConsumeQueue对象及其对应关系存入consumeQueueTable中
                         this.putConsumeQueue(topic, queueId, logic);
+                        //加载ConsumeQueue文件
                         if (!this.load(logic)) {
                             return false;
                         }
@@ -158,6 +189,7 @@ public class ConsumeQueueStore {
                 topic,
                 queueId,
                 storePath,
+                //大小默认30w数据
                 this.messageStoreConfig.getMappedFileSizeConsumeQueue(),
                 this.messageStore);
         } else if (Objects.equals(CQType.BatchCQ, cqType)) {
@@ -165,6 +197,7 @@ public class ConsumeQueueStore {
                 topic,
                 queueId,
                 storePath,
+                //大小默认30w数据
                 this.messageStoreConfig.getMapperFileSizeBatchConsumeQueue(),
                 this.messageStore);
         } else {
@@ -172,11 +205,16 @@ public class ConsumeQueueStore {
         }
     }
 
+    /**
+     * 用于检查指定主题（topic）的消费队列（Consumer Queue）类型是否符合预期。该方法通常被用于在消息发送或消费时进行预检查，以确保消费队列类型的一致性
+     * @param topic
+     * @param cqTypeExpected
+     */
     private void queueTypeShouldBe(String topic, CQType cqTypeExpected) {
         TopicConfig topicConfig = this.topicConfigTable == null ? null : this.topicConfigTable.get(topic);
-
+        // 获取指定主题的消费队列类型
         CQType cqTypeActual = QueueTypeUtils.getCQType(Optional.ofNullable(topicConfig));
-
+        // 如果消费队列类型不符合预期，则抛出异常
         if (!Objects.equals(cqTypeExpected, cqTypeActual)) {
             throw new RuntimeException(format("The queue type of topic: %s should be %s, but is %s", topic, cqTypeExpected, cqTypeActual));
         }
@@ -192,11 +230,18 @@ public class ConsumeQueueStore {
             new ThreadFactoryImpl(threadNamePrefix));
     }
 
+    /**
+     * 同步恢复文件
+     * @param consumeQueue
+     */
     public void recover(ConsumeQueueInterface consumeQueue) {
         FileQueueLifeCycle fileQueueLifeCycle = getLifeCycle(consumeQueue.getTopic(), consumeQueue.getQueueId());
         fileQueueLifeCycle.recover();
     }
 
+    /**
+     * 同步恢复文件
+     */
     public void recover() {
         for (ConcurrentMap<Integer, ConsumeQueueInterface> maps : this.consumeQueueTable.values()) {
             for (ConsumeQueueInterface logic : maps.values()) {
@@ -205,6 +250,10 @@ public class ConsumeQueueStore {
         }
     }
 
+    /**
+     * 异步恢复文件
+     * @return
+     */
     public boolean recoverConcurrently() {
         int count = 0;
         for (ConcurrentMap<Integer, ConsumeQueueInterface> maps : this.consumeQueueTable.values()) {
@@ -322,6 +371,14 @@ public class ConsumeQueueStore {
         return doFindOrCreateConsumeQueue(topic, queueId);
     }
 
+    /**
+     * 尝试查找指定主题和队列编号的消费队列。
+     * 如果找到了对应的消费队列，则返回该消费队列的实例。
+     * 如果没有找到对应的消费队列，则创建一个新的消费队列，并返回该消费队列的实例。
+     * @param topic
+     * @param queueId
+     * @return
+     */
     private ConsumeQueueInterface doFindOrCreateConsumeQueue(String topic, int queueId) {
         ConcurrentMap<Integer, ConsumeQueueInterface> map = consumeQueueTable.get(topic);
         if (null == map) {
@@ -415,10 +472,15 @@ public class ConsumeQueueStore {
         }
     }
 
+    /**
+     * 在对consumequeue和commitlog进行恢复之后，之后会对consumeQueueTable进行恢复。
+     * topicQueueTable存储的是“topic-queueid”到当前queueId下面最大的相对偏移量的map
+     * @param minPhyOffset
+     */
     public void recoverOffsetTable(long minPhyOffset) {
         ConcurrentMap<String, Long> cqOffsetTable = new ConcurrentHashMap<>(1024);
         ConcurrentMap<String, Long> bcqOffsetTable = new ConcurrentHashMap<>(1024);
-
+        //遍历consumeQueueTable，即consumequeue文件的集合
         for (ConcurrentMap<Integer, ConsumeQueueInterface> maps : this.consumeQueueTable.values()) {
             for (ConsumeQueueInterface logic : maps.values()) {
                 String key = logic.getTopic() + "-" + logic.getQueueId();
@@ -435,6 +497,7 @@ public class ConsumeQueueStore {
         }
 
         //Correct unSubmit consumeOffset
+        //是否开启重复消息校验
         if (messageStoreConfig.isDuplicationEnable()) {
             SelectMappedBufferResult lastBuffer = null;
             long startReadOffset = messageStore.getCommitLog().getConfirmOffset() == -1 ? 0 : messageStore.getCommitLog().getConfirmOffset();
@@ -474,8 +537,9 @@ public class ConsumeQueueStore {
 
             }
         }
-
+        //设置为topicQueueTable
         this.setTopicQueueTable(cqOffsetTable);
+        //设置为BatchtopicQueueTable
         this.setBatchTopicQueueTable(bcqOffsetTable);
     }
 
@@ -529,7 +593,12 @@ public class ConsumeQueueStore {
         }
     }
 
+    /**
+     * DefaultMessageStore的方法 清除consumequeue文件中的脏数据（最大有效偏移量后面的数据）
+     * @param phyOffset physical offset commitlog文件的最大有效区域的偏移量
+     */
     public void truncateDirty(long phyOffset) {
+        //获取consumeQueueTable遍历
         for (ConcurrentMap<Integer, ConsumeQueueInterface> maps : this.consumeQueueTable.values()) {
             for (ConsumeQueueInterface logic : maps.values()) {
                 this.truncateDirtyLogicFiles(logic, phyOffset);

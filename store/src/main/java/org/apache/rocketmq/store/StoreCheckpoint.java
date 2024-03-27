@@ -33,25 +33,44 @@ public class StoreCheckpoint {
     private final RandomAccessFile randomAccessFile;
     private final FileChannel fileChannel;
     private final MappedByteBuffer mappedByteBuffer;
+    //最新commitlog文件的刷盘时间戳，单位毫秒
     private volatile long physicMsgTimestamp = 0;
+    //最新consumeQueue文件的刷盘时间戳，单位毫秒
     private volatile long logicsMsgTimestamp = 0;
+    //创建最新indexfile文件的时间戳，单位毫秒
     private volatile long indexMsgTimestamp = 0;
+    //masterFlushedOffset 是 RocketMQ 中用于表示主节点已经刷盘的消息偏移量的概念，用于确保消息的持久化和一致性
     private volatile long masterFlushedOffset = 0;
 
+    /**
+     * StoreCheckpoint记录了三个关键属性：
+     * physicMsgTimestamp：最新commitlog文件的刷盘时间戳，单位毫秒。
+     * logicsMsgTimestamp：最新consumeQueue文件的刷盘时间戳，单位毫秒。
+     * indexMsgTimestamp：创建最新indexfile文件的时间戳，单位毫秒。
+     * @param scpPath
+     * @throws IOException
+     */
     public StoreCheckpoint(final String scpPath) throws IOException {
         File file = new File(scpPath);
+        //判断存在当前文件
         UtilAll.ensureDirOK(file.getParent());
         boolean fileExists = file.exists();
-
+        //对checkpoint文件同样执行mmap操作
         this.randomAccessFile = new RandomAccessFile(file, "rw");
         this.fileChannel = this.randomAccessFile.getChannel();
+        //mmap大小为OS_PAGE_SIZE，即OS一页，4k
         this.mappedByteBuffer = fileChannel.map(MapMode.READ_WRITE, 0, DefaultMappedFile.OS_PAGE_SIZE);
 
         if (fileExists) {
             log.info("store checkpoint file exists, " + scpPath);
+            //从给定索引出读取8字节数据
+            //最新commitlog文件的刷盘时间戳，单位毫秒
             this.physicMsgTimestamp = this.mappedByteBuffer.getLong(0);
+            //最新consumeQueue文件的刷盘时间戳，单位毫秒
             this.logicsMsgTimestamp = this.mappedByteBuffer.getLong(8);
+            //创建最新indexfile文件的时间戳，单位毫秒
             this.indexMsgTimestamp = this.mappedByteBuffer.getLong(16);
+            //masterFlushedOffset 是 RocketMQ 中用于表示主节点已经刷盘的消息偏移量的概念，用于确保消息的持久化和一致性
             this.masterFlushedOffset = this.mappedByteBuffer.getLong(24);
 
             log.info("store checkpoint file physicMsgTimestamp " + this.physicMsgTimestamp + ", "

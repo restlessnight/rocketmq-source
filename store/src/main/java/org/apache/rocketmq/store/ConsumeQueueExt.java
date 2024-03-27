@@ -268,6 +268,7 @@ public class ConsumeQueueExt {
     }
 
     /**
+     * 调用消费队列的扩展文件（consumeQueueExt）的恢复方法。这个方法可能用于从存储介质中读取并恢复扩展文件的状态信息，以便恢复上次的工作状态
      * Recover.
      */
     public void recover() {
@@ -348,7 +349,7 @@ public class ConsumeQueueExt {
 
     /**
      * Delete files after {@code maxAddress}, and reset wrote/commit/flush position to last file.
-     *
+     * 调用消费队列的扩展文件的截断方法，根据最大地址（maxExtAddr）截断扩展文件。这个操作可能会截断扩展文件中多余的部分，以减少文件大小或者清理无效数据。
      * @param maxAddress less than 0
      */
     public void truncateByMaxAddress(final long maxAddress) {

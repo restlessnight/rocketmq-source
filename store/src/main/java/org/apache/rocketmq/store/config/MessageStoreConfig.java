@@ -391,6 +391,7 @@ public class MessageStoreConfig {
         this.debugLockEnable = debugLockEnable;
     }
 
+    //重复消息检验标志
     public boolean isDuplicationEnable() {
         return duplicationEnable;
     }

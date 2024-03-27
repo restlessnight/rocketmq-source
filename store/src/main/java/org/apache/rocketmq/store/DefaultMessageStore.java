@@ -313,6 +313,10 @@ public class DefaultMessageStore implements MessageStore {
         return true;
     }
 
+    /**
+     * DefaultMessageStore的方法 清除consumequeue文件中的脏数据（最大有效偏移量后面的数据）
+     * @param phyOffset physical offset commitlog文件的最大有效区域的偏移量
+     */
     @Override
     public void truncateDirtyLogicFiles(long phyOffset) {
         this.consumeQueueStore.truncateDirty(phyOffset);
@@ -351,7 +355,10 @@ public class DefaultMessageStore implements MessageStore {
             // load Consume Queue
             result = result && this.consumeQueueStore.load();
 
+            //检查消息存储配置中是否启用了消息压缩服务。如果 isEnableCompaction() 返回 true，则表示启用了消息压缩服务。
             if (messageStoreConfig.isEnableCompaction()) {
+                //执行加载压缩服务的逻辑
+                //方法负责加载压缩服务的状态。lastExitOK 是一个布尔值参数，表示上一次退出时是否正常。加载压缩服务的逻辑可能包括从存储中加载压缩相关的配置和状态信息，以便恢复到上一次退出时的状态。
                 result = result && this.compactionService.load(lastExitOK);
             }
 
@@ -1838,31 +1845,50 @@ public class DefaultMessageStore implements MessageStore {
         this.consumeQueueStore.checkSelf();
     }
 
+    /**
+     * 首先会判断是否存在临时文件，也就是abort文件，其路径为{storePathRootDir}/abort，Broker在启动时会创建{ROCKET_HOME}/store/abort文件，并且注册钩子函数：在JVM退出时删除abort文件。
+     * 如果下一次启动时不存在abort文件，表示钩子函数被正确执行，broker是正常退出的，不需要修复文件数据；
+     * 如果存在abort文件，说明broker是异常退出的，因为钩子函数并没有执行成功，此时文件数据可能不一致，需要进行数据修复。
+     * @return
+     */
     private boolean isTempFileExist() {
+        //获取临时文件路径，路径为：{storePathRootDir}/abort
         String fileName = StorePathConfigHelper.getAbortFile(this.messageStoreConfig.getStorePathRootDir());
+        //构建file文件对象
         File file = new File(fileName);
+        //判断文件是否存在
         return file.exists();
     }
 
+    /**
+     * 恢复ConsumeQueue文件和CommitLog文件，将正确的的数据恢复至内存中，删除错误数据和文件。
+     * @param lastExitOK
+     */
     private void recover(final boolean lastExitOK) {
+        //获取是否允许并发恢复文件
         boolean recoverConcurrently = this.brokerConfig.isRecoverConcurrently();
         LOGGER.info("message store recover mode: {}", recoverConcurrently ? "concurrent" : "normal");
 
         // recover consume queue
         long recoverConsumeQueueStart = System.currentTimeMillis();
+        //恢复所有的ConsumeQueue文件
         this.recoverConsumeQueue();
+        //返回在ConsumeQueue存储的最大有效commitlog偏移量
         long maxPhyOffsetOfConsumeQueue = this.getMaxOffsetInConsumeQueue();
         long recoverConsumeQueueEnd = System.currentTimeMillis();
 
         // recover commitlog
         if (lastExitOK) {
+            //正常恢复commitLog
             this.commitLog.recoverNormally(maxPhyOffsetOfConsumeQueue);
         } else {
+            //异常恢复commitLog
             this.commitLog.recoverAbnormally(maxPhyOffsetOfConsumeQueue);
         }
 
         // recover consume offset table
         long recoverCommitLogEnd = System.currentTimeMillis();
+        //最后恢复topicQueueTable
         this.recoverTopicQueueTable();
         long recoverConsumeOffsetEnd = System.currentTimeMillis();
 
@@ -1891,19 +1917,33 @@ public class DefaultMessageStore implements MessageStore {
         return transientStorePool;
     }
 
+    /**
+     * 恢复所有的ConsumeQueue文件
+     */
     private void recoverConsumeQueue() {
+        //是否允许并发恢复
         if (!this.brokerConfig.isRecoverConcurrently()) {
+            //同步恢复文件
             this.consumeQueueStore.recover();
         } else {
+            //异步恢复文件
             this.consumeQueueStore.recoverConcurrently();
         }
     }
 
+    /**
+     * 返回ConsumeQueue文件的最大commitlog有效物理偏移量
+     * @return
+     */
     private long getMaxOffsetInConsumeQueue() {
         return this.consumeQueueStore.getMaxOffsetInConsumeQueue();
     }
-
+    /**
+     * 在对consumequeue和commitlog进行恢复之后，之后会对consumeQueueTable进行恢复。
+     * topicQueueTable存储的是“topic-queueid”到当前queueId下面最大的相对偏移量的map
+     */
     public void recoverTopicQueueTable() {
+        //获取commitlog的最小偏移量
         long minPhyOffset = this.commitLog.getMinOffset();
         this.consumeQueueStore.recoverOffsetTable(minPhyOffset);
     }

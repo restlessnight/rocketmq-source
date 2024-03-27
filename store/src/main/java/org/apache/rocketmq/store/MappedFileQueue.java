@@ -43,6 +43,16 @@ public class MappedFileQueue implements Swappable {
 
     protected final int mappedFileSize;
 
+    /**
+     * 优点
+     * 读操作（不加锁）性能很高，因为无需任何同步措施，比较适用于读多写少的并发场景。Java的list在遍历时，
+     * 若中途有别的线程对list容器进行修改，则会抛ConcurrentModificationException异常。而CopyOnWriteArrayList由于其"读写分离"的思想，
+     * 遍历和修改操作分别作用在不同的list容器，所以在使用迭代器进行遍历时候，也就不会抛出ConcurrentModificationException异常了。
+     * 缺点
+     * 一是内存占用问题，毕竟每次执行写操作都要将原容器拷贝一份。数据量大时，对内存压力较大，可能会引起频繁GC；
+     * 二是无法保证实时性，因为CopyOnWrite的写时复制机制，所以在进行写操作的时候，内存里会同时驻扎两个对象的内存，
+     * 旧的对象和新写入的对象（注意：在复制的时候只是复制容器里的引用，只是在写的时候会创建新对象添加到新容器里，而旧容器的对象还在使用，所以有两份对象内存）。
+     */
     protected final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<>();
 
     protected final AllocateMappedFileService allocateMappedFileService;
@@ -105,26 +115,41 @@ public class MappedFileQueue implements Swappable {
         return mfs;
     }
 
+    /**
+     * 截断无效文件
+     * consumequeue，commitlog文件进行恢复的时候会调用该方法。
+     * @param offset 文件的最大有效数据偏移量
+     */
     public void truncateDirtyFiles(long offset) {
+        //待移除的文件集合
         List<MappedFile> willRemoveFiles = new ArrayList<>();
-
+        //遍历内部所有的MappedFile文件
         for (MappedFile file : this.mappedFiles) {
+            //获取当前文件自身的最大数据偏移量
             long fileTailOffset = file.getFileFromOffset() + this.mappedFileSize;
             if (fileTailOffset > offset) {
+                //如果最大有效数据偏移量大于等于该文件的起始偏移量，那么说明当前文件有一部分数据是有效的，那么设置该文件的有效属性
                 if (offset >= file.getFileFromOffset()) {
                     file.setWrotePosition((int) (offset % this.mappedFileSize));
                     file.setCommittedPosition((int) (offset % this.mappedFileSize));
                     file.setFlushedPosition((int) (offset % this.mappedFileSize));
                 } else {
+                    //如果如果最大有效数据偏移量小于该文件的起始偏移量，那么删除该文件
+                    //todo 1000的作用
                     file.destroy(1000);
+                    //记录到待删除的文件集合中
                     willRemoveFiles.add(file);
                 }
             }
         }
-
+        //将等待移除的文件整体从mappedFiles中移除
         this.deleteExpiredFile(willRemoveFiles);
     }
 
+    /**
+     * 将等待移除的文件整体从mappedFiles中移除
+     * @param files
+     */
     void deleteExpiredFile(List<MappedFile> files) {
 
         if (!files.isEmpty()) {
@@ -133,12 +158,14 @@ public class MappedFileQueue implements Swappable {
             while (iterator.hasNext()) {
                 MappedFile cur = iterator.next();
                 if (!this.mappedFiles.contains(cur)) {
+                    //从mappedFiles集合中删除当前MappedFile
                     iterator.remove();
                     log.info("This mappedFile {} is not contained by mappedFiles, so skip it.", cur.getFileName());
                 }
             }
 
             try {
+                //如果并没有完全移除这些无效文件，那么记录异常信息
                 if (!this.mappedFiles.removeAll(files)) {
                     log.error("deleteExpiredFile remove failed.");
                 }
@@ -149,24 +176,40 @@ public class MappedFileQueue implements Swappable {
     }
 
 
+    /**
+     * 通用方法加载文件创建mmap映射
+     * MappedFileQueue#load方法会就是将commitLog目录路径下的commotlog文件进行全部的加载为MappedFile对象。
+     * @return
+     */
     public boolean load() {
+        //不止commitlog还有consumeQueue
+        //获取commitlog文件的存放目录，目录路径取自broker.conf文件中配置的storePathCommitLog属性，默认为$HOME/store/commitlog/
+        //storePath 是 创建MappedFileQueue对象的时候设置的
         File dir = new File(this.storePath);
+        //获取内部的文件集合
         File[] ls = dir.listFiles();
         if (ls != null) {
+            //如果存在commitlog文件，那么进行加载
             return doLoad(Arrays.asList(ls));
         }
         return true;
     }
 
+    /**
+     * MappedFileQueue的方法
+     * @param files
+     * @return
+     */
     public boolean doLoad(List<File> files) {
         // ascending order
+        // 对commitlog文件按照文件名生序排序
         files.sort(Comparator.comparing(File::getName));
 
         for (File file : files) {
             if (file.isDirectory()) {
                 continue;
             }
-
+            //校验文件实际大小是否等于预定的文件大小，如果不相等，则直接返回false，不再加载其他文件
             if (file.length() != this.mappedFileSize) {
                 log.warn(file + "\t" + file.length()
                         + " length not matched message store config value, please check it manually");
@@ -174,11 +217,23 @@ public class MappedFileQueue implements Swappable {
             }
 
             try {
+                /*
+                 * 核心代码
+                 * 每一个commitlog文件都创建一个对应的MappedFile对象
+                 * 在物理上，commotlog目录下面是一个个的commitlog文件，但是在Java中进行了三层映射，CommitLog-MappedFileQueue-MappedFile。CommitLog中包含MappedFileQueue，
+                 * 以及commitlog相关的其他服务，例如刷盘服务；MappedFileQueue中包含MappedFile集合，以及单个commotlog文件大小等属性，
+                 * 而MappedFile才是真正的一个commotlog文件在Java中的映射，包含文件名、大小、mmap对象mappedByteBuffer等属性。
+                 * 实际上MappedFileQueue和MappedFile都是通用类，commitlog、comsumequeue、indexfile文件都会使用到。
+                 */
                 MappedFile mappedFile = new DefaultMappedFile(file.getPath(), mappedFileSize);
-
+                //将wrotePosition 、flushedPosition、committedPosition 默认设置为文件大小
+                //当前文件所映射到的消息写入page cache的位置
                 mappedFile.setWrotePosition(this.mappedFileSize);
+                //刷盘的最新位置
                 mappedFile.setFlushedPosition(this.mappedFileSize);
+                //已提交的最新位置
                 mappedFile.setCommittedPosition(this.mappedFileSize);
+                //添加到MappedFileQueue内部的mappedFiles集合中
                 this.mappedFiles.add(mappedFile);
                 log.info("load " + file.getPath() + " OK");
             } catch (IOException e) {

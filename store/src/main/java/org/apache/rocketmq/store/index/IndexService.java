@@ -55,17 +55,31 @@ public class IndexService {
             StorePathConfigHelper.getStorePathIndex(defaultMessageStore.getMessageStoreConfig().getStorePathRootDir());
     }
 
+    /**
+     * 加载索引文件
+     * 官方介绍：IndexFile（索引文件）提供了一种可以通过key或时间区间来查询消息的方法。
+     * Index文件的存储位置是：HOME/store/indexHOME/store/indexHOME/store/index/{fileName}，文件名fileName是以创建时的时间戳命名的，
+     * 固定的单个IndexFile文件大小约为400M，一个IndexFile可以保存 2000W个索引，
+     * IndexFile的底层存储设计为在文件系统中实现HashMap结构，故rocketmq的索引文件其底层实现为hash索引。
+     * @param lastExitOK
+     * @return
+     */
     public boolean load(final boolean lastExitOK) {
+        //获取上级目录路径，{storePathRootDir}/index
         File dir = new File(this.storePath);
+        //获取内部的index索引文件
         File[] files = dir.listFiles();
         if (files != null) {
             // ascending order
+            // 按照文件名字中的时间戳排序
             Arrays.sort(files);
             for (File file : files) {
                 try {
+                    //一个index文件对应着一个IndexFile实例
                     IndexFile f = new IndexFile(file.getPath(), this.hashSlotNum, this.indexNum, 0, 0);
+                    //加载index文件
                     f.load();
-
+                    //如果上一次是异常推出，并且当前index文件中最后一个消息的落盘时间戳大于最后一个index索引文件创建时间，则该索引文件被删除
                     if (!lastExitOK) {
                         if (f.getEndTimestamp() > this.defaultMessageStore.getStoreCheckpoint()
                             .getIndexMsgTimestamp()) {
@@ -75,6 +89,7 @@ public class IndexService {
                     }
 
                     LOGGER.info("load index file OK, " + f.getFileName());
+                    //加入到索引文件集合
                     this.indexFileList.add(f);
                 } catch (IOException e) {
                     LOGGER.error("load file {} error", file, e);
