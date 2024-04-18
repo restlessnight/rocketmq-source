@@ -18,21 +18,40 @@ package org.apache.rocketmq.remoting.protocol;
 
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Dataversion和topic的配置被加载到内存之后，分别会解析成为topicConfigManager的topicConfigTablehe属性和dataVersion属性
+ */
 public class DataVersion extends RemotingSerializable {
     private long stateVersion = 0L;
+
+    /**
+     * 时间戳毫秒值
+     */
     private long timestamp = System.currentTimeMillis();
+    /**
+     * 版本号
+     */
     private AtomicLong counter = new AtomicLong(0);
 
+    /**
+     * 拷贝目标dataVersion的数据，在从文件恢复数据的时候会用到
+     */
     public void assignNewOne(final DataVersion dataVersion) {
         this.timestamp = dataVersion.timestamp;
         this.stateVersion = dataVersion.stateVersion;
         this.counter.set(dataVersion.counter.get());
     }
 
+    /**
+     * nextVersion方法被调用时，将会引起timestamp和counter的改变，一般来说，
+     * 新创建broker，或者更新topic的信息的时候nextVersion方法会被调用
+     */
     public void nextVersion() {
         this.nextVersion(0L);
     }
-
+    /**
+     * 更新时间戳以及counter到下一个版本
+     */
     public void nextVersion(long stateVersion) {
         this.timestamp = System.currentTimeMillis();
         this.stateVersion = stateVersion;

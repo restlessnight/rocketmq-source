@@ -22,6 +22,11 @@ import org.apache.rocketmq.logging.org.slf4j.Logger;
 import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.remoting.ChannelEventListener;
 
+/**
+ * 如果broker和nameserver之间的长连接异常关闭，那么此前绑定的BrokerHousekeepingService就发挥了作用，
+ * BrokerHousekeepingService继承了ChannelEventListener，当触发连接异常事件时，
+ * BrokerHousekeepingService内部的方法同样会调用RouteInfoManager#onChannelDestroy清除路由信息。
+ */
 public class BrokerHousekeepingService implements ChannelEventListener {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final ControllerManager controllerManager;
@@ -29,21 +34,21 @@ public class BrokerHousekeepingService implements ChannelEventListener {
     public BrokerHousekeepingService(ControllerManager controllerManager) {
         this.controllerManager = controllerManager;
     }
-
+    //连接事件，不处理
     @Override
     public void onChannelConnect(String remoteAddr, Channel channel) {
     }
-
+    //连接关闭事件
     @Override
     public void onChannelClose(String remoteAddr, Channel channel) {
         this.controllerManager.getHeartbeatManager().onBrokerChannelClose(channel);
     }
-
+    //连接异常事件
     @Override
     public void onChannelException(String remoteAddr, Channel channel) {
         this.controllerManager.getHeartbeatManager().onBrokerChannelClose(channel);
     }
-
+    //连接闲置事件
     @Override
     public void onChannelIdle(String remoteAddr, Channel channel) {
         this.controllerManager.getHeartbeatManager().onBrokerChannelClose(channel);

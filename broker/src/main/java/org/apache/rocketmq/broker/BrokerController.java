@@ -1740,9 +1740,13 @@ public class BrokerController {
 
         if (!isIsolated && !this.messageStoreConfig.isEnableDLegerCommitLog() && !this.messageStoreConfig.isDuplicationEnable()) {
             changeSpecialServiceStatus(this.brokerConfig.getBrokerId() == MixAll.MASTER_ID);
+            /**
+             * 强制注册broker到namesrv，避免集群中有多个broker时，只有一个broker注册成功，其他broker注册失败
+             */
             this.registerBrokerAll(true, false, true);
         }
 
+        //启动定时任务，默认30秒执行一次，时间间隔可以配置 brokerConfig.getRegisterNameServerPeriod() 允许 10000-60000ms之间
         scheduledFutures.add(this.scheduledExecutorService.scheduleAtFixedRate(new AbstractBrokerRunnable(this.getBrokerIdentity()) {
             @Override
             public void run0() {
@@ -1849,19 +1853,27 @@ public class BrokerController {
 
     public synchronized void registerBrokerAll(final boolean checkOrderConfig, boolean oneway, boolean forceRegister) {
 
+        //创建一个 TopicConfigAndMappingSerializeWrapper 对象 topicConfigWrapper，并设置其各项数据。
+        //根据TopicConfigManager中的topic信息构建topic信息的传输协议对象，
+        //在此前的topicConfigManager.load()方法中已经加载了所有topic信息，topic配置文件加载路径为{user.home}/store/config/topics.json
         TopicConfigAndMappingSerializeWrapper topicConfigWrapper = new TopicConfigAndMappingSerializeWrapper();
 
+        //设置 topicConfigWrapper 的数据版本
         topicConfigWrapper.setDataVersion(this.getTopicConfigManager().getDataVersion());
+        //设置 topicConfigWrapper 的 topicConfigTable
         topicConfigWrapper.setTopicConfigTable(this.getTopicConfigManager().getTopicConfigTable());
 
+        //设置 topicConfigWrapper 的 topicQueueMappingInfoMap
         topicConfigWrapper.setTopicQueueMappingInfoMap(this.getTopicQueueMappingManager().getTopicQueueMappingTable().entrySet().stream().map(
             entry -> new AbstractMap.SimpleImmutableEntry<>(entry.getKey(), TopicQueueMappingDetail.cloneAsMappingInfo(entry.getValue()))
         ).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
 
+        //进行一些权限检查，如果 Broker 的权限不可写或不可读，则创建一个新的 ConcurrentHashMap，遍历原有的 topicConfigTable，并根据 Broker 的权限重新生成 topicConfigTable。
         if (!PermName.isWriteable(this.getBrokerConfig().getBrokerPermission())
             || !PermName.isReadable(this.getBrokerConfig().getBrokerPermission())) {
             ConcurrentHashMap<String, TopicConfig> topicConfigTable = new ConcurrentHashMap<>();
             for (TopicConfig topicConfig : topicConfigWrapper.getTopicConfigTable().values()) {
+                //那么重新配置topic权限
                 TopicConfig tmp =
                     new TopicConfig(topicConfig.getTopicName(), topicConfig.getReadQueueNums(), topicConfig.getWriteQueueNums(),
                         topicConfig.getPerm() & this.brokerConfig.getBrokerPermission(), topicConfig.getTopicSysFlag());
@@ -1870,6 +1882,8 @@ public class BrokerController {
             topicConfigWrapper.setTopicConfigTable(topicConfigTable);
         }
 
+        //如果满足注册条件（forceRegister 为 true，或需要注册），则调用 doRegisterBrokerAll 方法进行注册。
+        //如果forceRegister为true，表示强制注册，或者如果当前broker应该注册，那么向nameServer进行注册
         if (forceRegister || needRegister(this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),
             this.brokerConfig.getBrokerName(),
@@ -1880,6 +1894,13 @@ public class BrokerController {
         }
     }
 
+    /**
+     * BrokerController的方法
+     *
+     * @param checkOrderConfig   是否检测顺序topic
+     * @param oneway             是否是单向
+     * @param topicConfigWrapper topic信息的传输协议包装对象
+     */
     protected void doRegisterBrokerAll(boolean checkOrderConfig, boolean oneway,
         TopicConfigSerializeWrapper topicConfigWrapper) {
 
@@ -1887,12 +1908,15 @@ public class BrokerController {
             BrokerController.LOG.info("BrokerController#doResterBrokerAll: broker has shutdown, no need to register any more.");
             return;
         }
+        //执行注册，broker作为客户端向所有的nameserver发起注册请求
         List<RegisterBrokerResult> registerBrokerResultList = this.brokerOuterAPI.registerBrokerAll(
             this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),
             this.brokerConfig.getBrokerName(),
             this.brokerConfig.getBrokerId(),
             this.getHAServerAddr(),
+            //包含了携带topic信息的topicConfigTable，以及版本信息的dataVersion
+            //这两个信息保存在持久化文件topics.json中
             topicConfigWrapper,
             this.filterServerManager.buildNewFilterServerList(),
             oneway,
@@ -1901,7 +1925,7 @@ public class BrokerController {
             this.brokerConfig.isCompressedRegister(),
             this.brokerConfig.isEnableSlaveActingMaster() ? this.brokerConfig.getBrokerNotActiveTimeoutMillis() : null,
             this.getBrokerIdentity());
-
+        //对执行结果进行处理
         handleRegisterBrokerResult(registerBrokerResultList, checkOrderConfig);
     }
 
@@ -1995,6 +2019,19 @@ public class BrokerController {
         }
     }
 
+
+    /**
+     * BrokerController的方法
+     * <p>
+     * broker是否需要向nemeserver中注册
+     *
+     * @param clusterName  集群名
+     * @param brokerAddr   broker地址
+     * @param brokerName   broker名字
+     * @param brokerId     brkerId
+     * @param timeoutMills 超时时间
+     * @return broker是否需要向nameserver中注册
+     */
     private boolean needRegister(final String clusterName,
         final String brokerAddr,
         final String brokerName,
@@ -2002,9 +2039,13 @@ public class BrokerController {
         final int timeoutMills,
         final boolean isInBrokerContainer) {
 
+        //根据TopicConfigManager中的topic信息构建topic信息的传输协议对象，
+        //在此前的topicConfigManager.load()方法中已经加载了所有topic信息，topic配置文件加载路径为{user.home}/store/config/topics.json
         TopicConfigSerializeWrapper topicConfigWrapper = this.getTopicConfigManager().buildTopicConfigSerializeWrapper();
+        //获取所有nameServer的DataVersion数据，一一对比自身数据是否一致，如果有一个nameserver的DataVersion数据版本不一致则重新注册
         List<Boolean> changeList = brokerOuterAPI.needRegister(clusterName, brokerAddr, brokerName, brokerId, topicConfigWrapper, timeoutMills, isInBrokerContainer);
         boolean needRegister = false;
+        //如果和一个nameServer的数据版本不一致，则需要重新注册
         for (Boolean changed : changeList) {
             if (changed) {
                 needRegister = true;
@@ -2155,18 +2196,26 @@ public class BrokerController {
         }
     }
 
+    /**
+     * 用于控制特殊服务的状态
+     * @param shouldStart
+     */
     public void changeSpecialServiceStatus(boolean shouldStart) {
 
+        //对 brokerAttachedPlugins 集合中的每个 BrokerAttachedPlugin 调用 statusChanged(shouldStart) 方法。这些插件可能会根据 shouldStart 参数来改变它们的状态
         for (BrokerAttachedPlugin brokerAttachedPlugin : brokerAttachedPlugins) {
             if (brokerAttachedPlugin != null) {
                 brokerAttachedPlugin.statusChanged(shouldStart);
             }
         }
 
+        //对定时任务服务进行状态切换
         changeScheduleServiceStatus(shouldStart);
 
+        //对事务服务进行状态切换
         changeTransactionCheckServiceStatus(shouldStart);
 
+        //检查 ackMessageProcessor 对象是否为非空，如果是，会设置 PopReviveService 的状态为 shouldStart，并记录相应的信息。
         if (this.ackMessageProcessor != null) {
             LOG.info("Set PopReviveService Status to {}", shouldStart);
             this.ackMessageProcessor.setPopReviveServiceStatus(shouldStart);

@@ -207,13 +207,22 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
         return response;
     }
 
+    /**
+     * DefaultRequestProcessor的方法
+     * <p>
+     * 处理broker的心跳请求
+     * 心跳请求的内容包括topic信息、版本信息dataVersion、消息过滤信息filterServerList、以及broker基本信息，例如broker地址、名字等等
+     */
     public RemotingCommand registerBroker(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
+        //创建返回数据
         final RemotingCommand response = RemotingCommand.createResponseCommand(RegisterBrokerResponseHeader.class);
+        //构建响应头
         final RegisterBrokerResponseHeader responseHeader = (RegisterBrokerResponseHeader) response.readCustomHeader();
+        //获取请求头
         final RegisterBrokerRequestHeader requestHeader =
             (RegisterBrokerRequestHeader) request.decodeCommandCustomHeader(RegisterBrokerRequestHeader.class);
-
+        //校验crc32
         if (!checksum(ctx, request, requestHeader)) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
             response.setRemark("crc32 not match");
@@ -222,8 +231,9 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
 
         TopicConfigSerializeWrapper topicConfigWrapper = null;
         List<String> filterServerList = null;
-
+        //获取broker版本
         Version brokerVersion = MQVersion.value2Version(request.getVersion());
+        //如果大于3.0.11版本则调用registerBrokerWithFilterServer，否则调用registerBroker
         if (brokerVersion.ordinal() >= MQVersion.Version.V3_0_11.ordinal()) {
             final RegisterBrokerBody registerBrokerBody = extractRegisterBrokerBodyFromRequest(request, requestHeader);
             topicConfigWrapper = registerBrokerBody.getTopicConfigSerializeWrapper();
@@ -232,7 +242,7 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
             // RegisterBrokerBody of old version only contains TopicConfig.
             topicConfigWrapper = extractRegisterTopicConfigFromRequest(request);
         }
-
+        //broker信息注册
         RegisterBrokerResult result = this.namesrvController.getRouteInfoManager().registerBroker(
             requestHeader.getClusterName(),
             requestHeader.getBrokerAddr(),
@@ -258,6 +268,8 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
         responseHeader.setMasterAddr(result.getMasterAddr());
 
         if (this.namesrvController.getNamesrvConfig().isReturnOrderTopicConfigToBroker()) {
+            //从configTable获取顺序消息的配置，configTable可用于存储一些配置信息，实现匹配的namespace隔离。
+            //目前版本似乎不太起作用，或许是当初设想但未利用起来的设计，返回null
             byte[] jsonValue = this.namesrvController.getKvConfigManager().getKVListByNamespace(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG);
             response.setBody(jsonValue);
         }

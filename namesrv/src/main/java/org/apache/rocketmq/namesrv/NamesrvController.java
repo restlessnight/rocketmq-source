@@ -105,6 +105,10 @@ public class NamesrvController {
         initiateNetworkComponents();
         initiateThreadExecutors();
         registerProcessor();
+        /*
+         * 5 启动一个定时任务
+         * 首次启动延迟5秒执行，此后每隔10秒执行一次扫描无效的Broker，并清除Broker相关路由信息的任务
+         */
         startScheduleService();
         initiateSslContext();
         initiateRpcHooks();
@@ -115,7 +119,11 @@ public class NamesrvController {
         this.kvConfigManager.load();
     }
 
+    /**
+     *  *
+     */
     private void startScheduleService() {
+        //扫描notActive的broker 首次启动延迟5秒执行，此后每隔5秒执行一次扫描无效的Broker，并清除Broker相关路由信息的任务
         this.scanExecutorService.scheduleAtFixedRate(NamesrvController.this.routeInfoManager::scanNotActiveBroker,
             5, this.namesrvConfig.getScanNotActiveBrokerInterval(), TimeUnit.MILLISECONDS);
 
